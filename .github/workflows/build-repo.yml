@@ -1,0 +1,85 @@
+name: Build Win11 Fonts Repo
+
+on:
+  push:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Prepare Builder Environment
+      run: |
+        pacman -Syu --noconfirm git
+
+        useradd -m -G wheel builduser
+        echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+        chown -R builduser:builduser .
+
+    - name: Build AUR Package (Split Packages)
+      run: |
+        su builduser -c "
+          echo '编译并安装 httpdirfs'
+          git clone https://aur.archlinux.org/httpdirfs.git
+          cd httpdirfs
+          makepkg -si --noconfirm
+          cd ..
+
+          echo '编译ttf-ms-win11'
+          git clone https://aur.archlinux.org/ttf-ms-win11-auto.git
+          cd ttf-ms-win11-auto
+          makepkg -s --noconfirm
+        "
+
+    - name: Create Pacman Repository Database and Index
+      run: |
+
+        mkdir -p repo
+
+        cp ttf-ms-win11-auto/*.pkg.tar.zst repo/
+
+        cd repo
+        repo-add lava114514.db.tar.gz *.pkg.tar.zst
+        cat << 'EOF' > index.html
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+            <meta charset="UTF-8">
+            <title>lava114514</title>
+        </head>
+        <body style="background-color: white; color: black; font-family: monospace;">
+            <h1>lava114514</h1>
+            <ul>
+        EOF
+
+        for pkg in *.pkg.tar.zst; do
+            echo "        <li><a href=\"$pkg\">$pkg</a></li>" >> index.html
+        done
+
+        cat << EOF >> index.html
+            </ul>
+            <p>$(date -d '+8 hours' '+%Y-%m-%d %H:%M:%S') (HKT)</p>
+        </body>
+        </html>
+        EOF
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./repo
+        publish_branch: gh-pages
